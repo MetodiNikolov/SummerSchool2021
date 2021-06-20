@@ -1,0 +1,281 @@
+\documentclass[8pt]{beamer}
+\usepackage[utf8x]{inputenc}
+\usepackage{hyperref}
+\usepackage{graphicx}
+\usepackage[english]{babel}
+
+\usepackage[T1]{fontenc}
+\usepackage{FiraSans} 
+\usepackage{url}
+\usepackage{mathtools}
+ 
+\mode<presentation>
+{
+	\usetheme[progressbar=foot,numbering=fraction,background=light]{metropolis} 
+	\usecolortheme{default} % or try albatross, beaver, crane, ...
+	\usefonttheme{default}  % or try serif, structurebold, ...
+	\setbeamertemplate{navigation symbols}{}
+	\setbeamertemplate{caption}[numbered]
+	%\setbeamertemplate{frame footer}{My custom footer}
+} 
+
+\usepackage{minted}
+
+%
+\title{Speeding up Python with Rust}
+\subtitle{Summer school on modelling and complex systems 2021}
+\author{Metodi Nikolov}
+\date{10 July 2021}
+
+
+\begin{document}
+\maketitle
+
+\begin{frame}
+\tableofcontents
+\end{frame}
+
+%\section{Introduction}
+%\begin{frame}{Purpose \& Scope}
+%In this lecture, we will see that, while Python is a great scripting language, it is slow. We will then embark on a journey to learn of a relatively new alternative, that still would allows to both get the speed of execution that we need and the ease of use that python provides
+%
+%\end{frame}
+
+
+\section{Motivating Example Model}
+\begin{frame}
+Say that you have come up with a very interesting Bayesian model for the data you have. The model is not supported by the standard packages for inference (e.g. \texttt{PyMCMC}, \texttt{Stan}), so you will have to code it yourself.
+\end{frame}
+
+\begin{frame}{Scaled Student T Distribution}
+Throughout this we will use a known model, with likelihood function based around the Scaled Student T Distribution, with priors as straightforward as they can be:
+
+\begin{align*}
+x &\sim t_\nu(\mu, \sigma^2) \\
+\mu &\propto const. \\
+\sigma^2 &\propto const. 
+\end{align*}
+
+\pause
+\begin{block}{Subordinate Representation}
+	\[x \sim \mu + N\sqrt{\frac{\nu \sigma^2} {\chi^2_\nu}}\]
+\end{block}
+\pause
+\begin{block}{Another Representation}
+	\begin{align*}
+	x &\sim N(\mu, V) \\
+	V &\sim \text{Inv-}\chi^2(\nu, \sigma^2)
+	\end{align*}
+\end{block}
+\pause
+NB: There is a $V$ for each data point!
+
+\end{frame}
+
+\begin{frame}
+We will cheat a bit and extend the above model to allow better mixing:
+	\begin{align*}
+x &\sim N(\mu, \alpha^2U) \\
+U &\sim \text{Inv-}\chi^2(\nu, \tau^2)
+\end{align*}
+\pause
+Here, $\alpha^2U$ plays the role of $V$, and $\alpha\tau=\sigma$ -- $\alpha$ is a 'mixing' parameter, helps with MCMC.
+The full conditional for Gibbs are as follows:
+\begin{itemize}
+	\item<3->\[ U_i| \alpha, \mu, \tau^2, \nu, \x \sim \text{Inv-}\chi^2\left(\nu+1, \frac{\nu\tau^2+ ((x_i-\mu)/\alpha)^2}{\nu+1}\right) \]
+	\item<4->\[\mu|\alpha, \tau^2, U, \nu, x \sim N\left(\frac{\sum\frac{1}{\alpha^2U_i}x_i}{\sum\frac{1}{\alpha^2U_i}}, \frac{1}{\sum\frac{1}{\alpha^2U_i}} \right) \]
+	\item<5->\[\tau^2 | \alpha, \mu, U, \nu, x \sim \text{Gamma}(\frac{\nu n}{2}, \frac{\nu}{2}\sum\frac{1}{U_i})\]
+	\item<6->\[\alpha^2| \mu, \tau^2, U, \nu, x \sim \text{Inv-}\chi^2\left(n, \frac{1}{n}\sum\frac{(x_i-\mu)^2}{U_i}\right)\]
+\end{itemize}
+
+\end{frame}
+\begin{frame}[fragile]
+\begin{minted}[fontsize=\scriptsize]{python}
+class ScaledTModel(object):
+
+	__slots__ = ['_data', '_data_size', '_nu',...] 
+
+	def __init__(self, data, nu):
+		pass
+		
+	def run(self, burnin, sample_size):
+		pass
+		
+	def get_mu(self):
+		pass
+		
+	def get_sigma2(self):
+		pass
+		
+	def _update_mu(self):
+		pass
+	
+	def _update_tau2(self):
+		pass
+	
+	def _update_alpha2(self):
+		pass
+	
+	def _update_extended_vars(self):
+		pass
+		
+	def _sampleScaledInvChiSquare(self, ni, scale):
+		pass
+	
+\end{minted}
+\end{frame}
+
+\begin{frame}[fragile]
+\begin{minted}[fontsize=\scriptsize]{python}
+def __init__(self, data, nu):
+	print("making a model")
+	self._data = np.asarray(data)
+	self._data_size = len(data)
+	self._nu = nu
+
+	self._rng = default_rng()
+	# Some starting values
+	self._extended_vars = np.zeros(self._data_size)
+	self._tau2 = 1
+	self._mu = sum(data) / self._data_size
+	self._alpha2 = 1
+
+	self._update_extended_vars()
+	
+	# temporary data holders, so that we reuse memory
+	self._tmp_with_data_size = np.zeros(self._data_size)
+	self._tmp_with_data_size2 = np.zeros(self._data_size)
+\end{minted}
+\end{frame}
+
+\begin{frame}[fragile]
+\begin{minted}[fontsize=\scriptsize]{python}
+def _update_mu(self):
+	np.reciprocal(self._extended_vars, out=self._tmp_with_data_size)
+	self._tmp_with_data_size2 = self._data * self._tmp_with_data_size
+
+	variance = self._tmp_with_data_size.sum()
+	expected_value = self._tmp_with_data_size2.sum()
+
+	variance /= self._alpha2
+	expected_value /= self._alpha2
+	variance = 1.0 / variance
+	expected_value = expected_value * variance
+	self._mu = self._rng.normal(expected_value, math.sqrt(variance))
+\end{minted}
+\end{frame}
+
+\begin{frame}[fragile]
+\begin{minted}[fontsize=\scriptsize]{python}
+def _update_tau2(self):
+	np.reciprocal(self._extended_vars, out=self._tmp_with_data_size)
+	x = self._tmp_with_data_size.sum()
+	self._tau2 = self._rng.gamma(self._data_size * self._nu / 2.0, 2.0 / (self._nu * x))
+
+
+def _update_alpha2(self):
+	x = 0.0
+	self._tmp_with_data_size = self._data - self._mu
+	self._tmp_with_data_size = (self._tmp_with_data_size * 
+		self._tmp_with_data_size) / self._extended_vars
+	x = self._tmp_with_data_size.sum()
+	x /= self._data_size
+	self._alpha2 = self._sampleScaledInvChiSquare(self._data_size, x)
+\end{minted}
+\end{frame}
+
+\begin{frame}[fragile]
+\begin{minted}[fontsize=\scriptsize]{python}
+def _update_extended_vars(self):
+	for i in range(self._data_size):
+		x = (self._data[i] - self._mu) * (self._data[i] - self._mu) / self._alpha2
+		self._extended_vars[i] = self._sampleScaledInvChiSquare(self._nu + 1, 
+			(self._nu * self._tau2 + x) / (self._nu + 1))
+
+@property
+def get_mu(self):
+	if hasattr(self, '_results_mu'):
+		return self._results_mu
+
+@property
+def get_sigma2(self):
+	if hasattr(self, '_results_sigma2'):
+		return self._results_sigma2
+\end{minted}
+\end{frame}
+
+\begin{frame}[fragile]
+\begin{minted}[fontsize=\scriptsize]{python}
+def run(self, burn_in = 1000, sample_size = 2000):
+	self._results_mu = np.zeros(sample_size)
+	self._results_sigma2 = np.zeros(sample_size)
+	print("Starting Burn-in")
+	for _ in range(burn_in):
+		self._update_extended_vars()
+		self._update_alpha2()
+		self._update_mu()
+		self._update_tau2
+
+	print("Starting Data run")
+	for i in range(sample_size):
+		self._update_extended_vars()
+		self._update_alpha2()
+		self._update_mu()
+		self._update_tau2
+		self._results_mu[i] = self._mu
+		self._results_sigma2[i] = self._alpha2 * self._tau2
+\end{minted}
+\end{frame}
+
+\begin{frame}[fragile]
+\begin{minted}[fontsize=\scriptsize]{python}
+from great_model.python_great_model import ScaledTModel as Model
+import numpy as np
+
+nu = 6
+mu = -3.14
+sigma2 = 30
+data_size = 500
+z = np.random.randn(data_size)
+x = np.random.chisquare(nu, data_size)
+
+t_data = mu + z * np.sqrt(sigma2 * nu / x)
+
+g_model = Model(t_data, nu)
+
+%timeit g_model.run(2000, 2000)
+\end{minted}
+
+On my local machine \%timeit reports 8 seconds of execution.  
+\end{frame}
+
+\section{Crash Course in Rust}
+
+\section{PyO3}
+
+\section{Motivating Example Model Revisited}
+
+\section{Next Steps}
+%\begin{frame}[fragile]
+%\begin{minted}[mathescape,
+%linenos,
+%frame=lines]{csharp}
+%
+%/*
+%Defined as $\pi=\lim_{n\to\infty}\frac{P_n}{d}$ where $P$ is the perimeter
+%of an $n$-sided regular polygon circumscribing a
+%circle of diameter $d$.
+%*/
+%const double pi = 3.1415926535
+%\end{minted}
+%\end{frame}
+
+\begin{frame}[allowframebreaks]
+\begin{thebibliography}{9}
+	\setbeamertemplate{bibliography item}[triangle]
+	\bibitem{gelman}
+	Gelman, A.; Carlin, J. B.; Stern, H. S. \& Rubin, D. B. (2014), \emph{Bayesian Data Analysis}, Chapman and Hall/CRC 
+\end{thebibliography}
+\end{frame}
+
+\end{document}
