@@ -1,7 +1,7 @@
 import setuptools
 
 setuptools.setup(
-    name="great-model-pkg",
+    name="great-model",
     version="0.0.1",
     author="Metodi Nikolov",
     author_email="metodi.nikolov@gmail.com",
