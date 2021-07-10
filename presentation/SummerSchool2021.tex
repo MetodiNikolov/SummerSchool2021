@@ -8,6 +8,7 @@
 \usepackage{FiraSans} 
 \usepackage{url}
 \usepackage{mathtools}
+
  
 \mode<presentation>
 {
@@ -18,6 +19,14 @@
 	\setbeamertemplate{caption}[numbered]
 	%\setbeamertemplate{frame footer}{My custom footer}
 } 
+
+
+\newcommand\blfootnote[1]{%
+	\begingroup
+	\renewcommand\thefootnote{}\footnote{#1}%
+	\addtocounter{footnote}{-1}%
+	\endgroup
+}
 
 \usepackage{minted}
 
@@ -31,24 +40,19 @@
 \begin{document}
 \maketitle
 
-\begin{frame}
+\begin{frame}{Contents}
 \tableofcontents
 \end{frame}
 
-%\section{Introduction}
-%\begin{frame}{Purpose \& Scope}
-%In this lecture, we will see that, while Python is a great scripting language, it is slow. We will then embark on a journey to learn of a relatively new alternative, that still would allows to both get the speed of execution that we need and the ease of use that python provides
-%
-%\end{frame}
 
-
-\section{Motivating Example Model}
-\begin{frame}
+\section{Motivating Example}
+\begin{frame}{A model}
 Say that you have come up with a very interesting Bayesian model for the data you have. The model is not supported by the standard packages for inference (e.g. \texttt{PyMCMC}, \texttt{Stan}), so you will have to code it yourself.
-\end{frame}
 
-\begin{frame}{Scaled Student T Distribution}
-Throughout this we will use a known model, with likelihood function based around the Scaled Student T Distribution, with priors as straightforward as they can be:
+\pause
+\begin{block}{Scaled Student T Distribution}
+Throughout this we will use a known model, with likelihood function based around the Scaled Student T Distribution, with priors as straightforward as they can be - the idea is to show work flow and ideas, not a specific model.
+\end{block}
 
 \begin{align*}
 x &\sim t_\nu(\mu, \sigma^2) \\
@@ -60,7 +64,9 @@ x &\sim t_\nu(\mu, \sigma^2) \\
 \begin{block}{Subordinate Representation}
 	\[x \sim \mu + N\sqrt{\frac{\nu \sigma^2} {\chi^2_\nu}}\]
 \end{block}
-\pause
+\end{frame}
+
+\begin{frame}{A model}
 \begin{block}{Another Representation}
 	\begin{align*}
 	x &\sim N(\mu, V) \\
@@ -69,27 +75,29 @@ x &\sim t_\nu(\mu, \sigma^2) \\
 \end{block}
 \pause
 NB: There is a $V$ for each data point!
+\pause
 
-\end{frame}
-
-\begin{frame}
-We will cheat a bit and extend the above model to allow better mixing:
-	\begin{align*}
+We will cheat a bit (i.e. make the model better in terms of learning it) and extend the above to allow better mixing:
+\begin{align*}
 x &\sim N(\mu, \alpha^2U) \\
 U &\sim \text{Inv-}\chi^2(\nu, \tau^2)
 \end{align*}
-\pause
+\blfootnote{Source: \emph{Bayesian Data Analysis 3rd ed.} Gelman at al. pp. 295}
+\end{frame}
+
+\begin{frame}{A model}
 Here, $\alpha^2U$ plays the role of $V$, and $\alpha\tau=\sigma$ -- $\alpha$ is a 'mixing' parameter, helps with MCMC.
 The full conditional for Gibbs are as follows:
 \begin{itemize}
 	\item<3->\[ U_i| \alpha, \mu, \tau^2, \nu, \x \sim \text{Inv-}\chi^2\left(\nu+1, \frac{\nu\tau^2+ ((x_i-\mu)/\alpha)^2}{\nu+1}\right) \]
 	\item<4->\[\mu|\alpha, \tau^2, U, \nu, x \sim N\left(\frac{\sum\frac{1}{\alpha^2U_i}x_i}{\sum\frac{1}{\alpha^2U_i}}, \frac{1}{\sum\frac{1}{\alpha^2U_i}} \right) \]
-	\item<5->\[\tau^2 | \alpha, \mu, U, \nu, x \sim \text{Gamma}(\frac{\nu n}{2}, \frac{\nu}{2}\sum\frac{1}{U_i})\]
+	\item<5->\[\tau^2 | \alpha, \mu, U, \nu, x \sim \text{Gamma}\left(\frac{\nu n}{2}, \frac{\nu}{2}\sum\frac{1}{U_i}\right)\]
 	\item<6->\[\alpha^2| \mu, \tau^2, U, \nu, x \sim \text{Inv-}\chi^2\left(n, \frac{1}{n}\sum\frac{(x_i-\mu)^2}{U_i}\right)\]
 \end{itemize}
-
+\blfootnote{Source: \emph{Bayesian Data Analysis 3rd ed.} Gelman et al. pp. 295}
 \end{frame}
-\begin{frame}[fragile]
+
+\begin{frame}[fragile]{Python implementation}
 \begin{minted}[fontsize=\scriptsize]{python}
 class ScaledTModel(object):
 
@@ -125,7 +133,129 @@ class ScaledTModel(object):
 \end{minted}
 \end{frame}
 
-\begin{frame}[fragile]
+\begin{frame}[fragile]{Pure Python implementation}
+\begin{minted}[fontsize=\scriptsize]{python}
+def __init__(self, data, nu):
+	print("making a model")
+	self._data = data
+	self._data_size = len(data)
+	self._nu = nu
+
+	self._extended_vars = [0.0] * self._data_size
+	self._tau2 = 1
+	self._mu = sum(data) / self._data_size
+	self._alpha2 = 1
+
+	self._update_extended_vars()
+\end{minted}
+\end{frame}
+
+\begin{frame}[fragile]{Pure Python implementation}
+\begin{minted}[fontsize=\scriptsize]{python}
+def _update_mu(self):
+	variance = 0.0
+	expected_value = 0.0
+	for i in range(self._data_size):
+		tmp = 1.0/self._extended_vars[i]
+		variance += tmp
+		expected_value += tmp * self._data[i]
+
+	variance /= self._alpha2
+	expected_value /= self._alpha2
+	variance = 1.0 / variance
+	expected_value = expected_value * variance
+	self._mu = random.gauss(expected_value, math.sqrt(variance))
+\end{minted}
+\end{frame}
+
+\begin{frame}[fragile]{Pure Python implementation}
+\begin{minted}[fontsize=\scriptsize]{python}
+def _update_tau2(self):
+	x = 0.0
+	for i in range(self._data_size):
+		x += 1.0 / self._extended_vars[i]
+	self._tau2 = random.gammavariate(
+		self._data_size * self._nu / 2.0, 
+		2.0 / (self._nu * x),
+	)
+
+def _update_alpha2(self):
+	x = 0.0
+	for i in range(self._data_size):
+		x += (self._data[i] - self._mu) * 
+			(self._data[i] - self._mu) / self._extended_vars[i]
+	x /= self._data_size
+	self._alpha2 = self._sampleScaledInvChiSquare(self._data_size, x)
+\end{minted}
+\end{frame}
+
+\begin{frame}[fragile]{Pure Python implementation}
+\begin{minted}[fontsize=\scriptsize]{python}
+def _update_extended_vars(self):
+	for i in range(self._data_size):
+		x = (self._data[i] - self._mu) * 
+			(self._data[i] - self._mu) / self._alpha2
+		self._extended_vars[i] = self._sampleScaledInvChiSquare(
+			self._nu + 1, (self._nu * self._tau2 + x) / (self._nu + 1))
+
+@property
+def get_mu(self):
+	return self._results_mu
+
+@property
+def get_sigma2(self):
+	return self._results_sigma2
+\end{minted}
+\end{frame}
+
+\begin{frame}[fragile]{Pure Python implementation}
+\begin{minted}[fontsize=\scriptsize]{python}
+def run(self, burn_in = 1000, sample_size = 2000):
+	self._results_mu = [0.0] * sample_size
+	self._results_sigma2 = [0.0] * sample_size
+	for _ in range(burn_in):	
+		self._update_extended_vars()
+		self._update_alpha2()
+		self._update_mu()
+		self._update_tau2
+
+	for i in range(sample_size):	
+		self._update_extended_vars()
+		self._update_alpha2()
+		self._update_mu()
+		self._update_tau2
+		self._results_mu[i] = self._mu
+		self._results_sigma2[i] = self._alpha2 * self._tau2
+\end{minted}
+\end{frame}
+
+\begin{frame}[fragile]{Pure Python implementation}
+\begin{minted}[fontsize=\scriptsize]{python}
+from great_model.python_great_model import ScaledTModel as PythonModel
+import numpy as np
+from timeit import timeit
+
+nu = 6
+mu = -3.14
+sigma2 = 30
+data_size = 500
+z = np.random.randn(data_size)
+x = np.random.chisquare(nu, data_size)
+
+t_data = mu + z * np.sqrt(sigma2 * nu / x)
+
+p_model = PythonModel(t_data, nu)
+
+
+exec_time = timeit('p_model.run(2000, 2000)', 
+globals=globals(), number = 10)
+print(f"Average run time of Pure Python model: {exec_time * 1000 / 10:3.5f} ms")
+Average run time of Pure Python model: 10404.53057 ms
+\end{minted}
+That's a bit more than 10 seconds.  
+\end{frame}
+
+\begin{frame}[fragile]{Numpy implementation}
 \begin{minted}[fontsize=\scriptsize]{python}
 def __init__(self, data, nu):
 	print("making a model")
@@ -148,7 +278,7 @@ def __init__(self, data, nu):
 \end{minted}
 \end{frame}
 
-\begin{frame}[fragile]
+\begin{frame}[fragile]{Numpy implementation}
 \begin{minted}[fontsize=\scriptsize]{python}
 def _update_mu(self):
 	np.reciprocal(self._extended_vars, out=self._tmp_with_data_size)
@@ -165,7 +295,7 @@ def _update_mu(self):
 \end{minted}
 \end{frame}
 
-\begin{frame}[fragile]
+\begin{frame}[fragile]{Numpy implementation}
 \begin{minted}[fontsize=\scriptsize]{python}
 def _update_tau2(self):
 	np.reciprocal(self._extended_vars, out=self._tmp_with_data_size)
@@ -184,39 +314,32 @@ def _update_alpha2(self):
 \end{minted}
 \end{frame}
 
-\begin{frame}[fragile]
+\begin{frame}[fragile]{Numpy implementation}
 \begin{minted}[fontsize=\scriptsize]{python}
 def _update_extended_vars(self):
-	for i in range(self._data_size):
-		x = (self._data[i] - self._mu) * (self._data[i] - self._mu) / self._alpha2
-		self._extended_vars[i] = self._sampleScaledInvChiSquare(self._nu + 1, 
-			(self._nu * self._tau2 + x) / (self._nu + 1))
+	x = (self._data - self._mu) * (self._data - self._mu) / self._alpha2
+	self._extended_vars =  self._sampleScaledInvChiSquareN(
+		self._nu + 1, 
+		(self._nu * self._tau2 + x) / (self._nu + 1),
+	)
 
-@property
-def get_mu(self):
-	if hasattr(self, '_results_mu'):
-		return self._results_mu
-
-@property
-def get_sigma2(self):
-	if hasattr(self, '_results_sigma2'):
-		return self._results_sigma2
+def _sampleScaledInvChiSquareN(self, ni, scale):
+	x = self._rng.chisquare(ni, size=len(scale))
+	return ni * scale / x
 \end{minted}
 \end{frame}
 
-\begin{frame}[fragile]
+\begin{frame}[fragile]{Numpy implementation}
 \begin{minted}[fontsize=\scriptsize]{python}
 def run(self, burn_in = 1000, sample_size = 2000):
 	self._results_mu = np.zeros(sample_size)
 	self._results_sigma2 = np.zeros(sample_size)
-	print("Starting Burn-in")
 	for _ in range(burn_in):
 		self._update_extended_vars()
 		self._update_alpha2()
 		self._update_mu()
 		self._update_tau2
 
-	print("Starting Data run")
 	for i in range(sample_size):
 		self._update_extended_vars()
 		self._update_alpha2()
@@ -227,10 +350,11 @@ def run(self, burn_in = 1000, sample_size = 2000):
 \end{minted}
 \end{frame}
 
-\begin{frame}[fragile]
+\begin{frame}[fragile]{Numpy implementation}
 \begin{minted}[fontsize=\scriptsize]{python}
-from great_model.python_great_model import ScaledTModel as Model
+from great_model.numpy_great_model import ScaledTModel as NumpyModel
 import numpy as np
+from timeit import timeit
 
 nu = 6
 mu = -3.14
@@ -241,41 +365,566 @@ x = np.random.chisquare(nu, data_size)
 
 t_data = mu + z * np.sqrt(sigma2 * nu / x)
 
-g_model = Model(t_data, nu)
+n_model = NumpyModel(t_data, nu)
 
-%timeit g_model.run(2000, 2000)
+
+exec_time = timeit('n_model.run(2000, 2000)', 
+	globals=globals(), number = 10)
+print(f"Average run time of Numpy model: {exec_time * 1000 / 10:3.5f} ms")
+Average run time of Numpy model: 356.86459 ms
 \end{minted}
-
-On my local machine \%timeit reports 8 seconds of execution.  
+That's more like it... Can we do better? And how much better?  
 \end{frame}
 
 \section{Crash Course in Rust}
+\begin{frame}{Rust is...}
+\begin{block}{Good because}
+	\begin{itemize}
+	\item A compiled, strongly typed, systems programming language (thing C/C++)
+	\item Fast - about the same performance as C/C++
+	\item Memory safe
+	\item With great interoperability
+	\item Outstanding tooling
+	\end{itemize}
+\end{block}
 
-\section{PyO3}
+\pause
+\begin{block}{Bad because }
+	\begin{itemize}
+	\item Steep learning curve
+	\item Long compile times
+	\item A somewhat young language
+	\end{itemize}
+\end{block}
 
-\section{Motivating Example Model Revisited}
-
-\section{Next Steps}
-%\begin{frame}[fragile]
-%\begin{minted}[mathescape,
-%linenos,
-%frame=lines]{csharp}
-%
-%/*
-%Defined as $\pi=\lim_{n\to\infty}\frac{P_n}{d}$ where $P$ is the perimeter
-%of an $n$-sided regular polygon circumscribing a
-%circle of diameter $d$.
-%*/
-%const double pi = 3.1415926535
-%\end{minted}
-%\end{frame}
-
-\begin{frame}[allowframebreaks]
-\begin{thebibliography}{9}
-	\setbeamertemplate{bibliography item}[triangle]
-	\bibitem{gelman}
-	Gelman, A.; Carlin, J. B.; Stern, H. S. \& Rubin, D. B. (2014), \emph{Bayesian Data Analysis}, Chapman and Hall/CRC 
-\end{thebibliography}
+\blfootnote{Source: \texttt{\url{https://cheats.rs/}}}
 \end{frame}
 
+\begin{frame}{The Rust Foundation}
+	\begin{figure}
+		\centering
+		\includegraphics[keepaspectratio=true,width=1\linewidth]{RustFoundation}
+		\label{fig:rustfoundation}
+	\end{figure}
+\end{frame}
+
+\begin{frame}[fragile]{Hello World for scientists}
+\begin{minted}{rust}
+fn main() {
+	// the type is not necessary in this case
+	let x: f64 = 1_000_000.0; 
+	
+	// no type cast - it is infered by the compiler
+	let y = { 
+		let z = x / 100.0;
+		// notice the missing colon 
+		// this is the return value of the block 
+		z 
+	};
+	
+	println!("The value of y is {}", y);
+}
+\end{minted}
+\end{frame}
+
+\begin{frame}[fragile]{One more Hello World}
+\begin{minted}{rust}
+fn main() {
+	// this variable we will want to change
+	let mut x: f64 = 0.0; 
+
+	for i in 1..=10 {
+		// we perform a cast, as i is not f64
+		x += i as f64; 
+	}
+	// we recreate the value x to remove mutability
+	let x = x; 
+	// we take the address of the variable x
+	let y = &x; 
+
+	// we pass a reference, but still get what we want
+	println!("The sum of the first 10 natural numbers is {}", y);  	
+}
+\end{minted}
+\end{frame}
+
+\begin{frame}[fragile]{One more Hello World 2}
+\begin{minted}[fontsize=\small]{rust}
+struct MyStruct {
+	has_value: bool,
+	large_vector: Vec<f64>,
+}
+
+fn freeFlowFunction(x: &[f64]) -> f64 {
+	unimplemented!();
+}
+
+impl MyStruct {
+	// method functions for the struct
+	fn increate_x(&mut self) {
+		self.x += 1;
+	}
+}
+
+impl fmt::Debug for MyStruct {
+	// implement a trait for MyStruct - in this case, 
+	// how to present the struct in debug messages
+	fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+		todo!()
+		// almost never need to do this: 
+		// annotate the struct definition with 
+		// #[derive(Debug)]  and the compiler will handle it
+	}
+}
+\end{minted}
+\end{frame}
+
+
+\begin{frame}[fragile]{One more Hello World 2f2f aka Family}
+\begin{minted}{rust}
+
+fn a_fun(x: String) {
+	if x.len() % 2 == 0 {
+		println!("Even");
+		return;
+	}
+	println!("Odd");
+	
+}
+fn main() {
+	let x = "Summer School 2021".to_string();
+	a_fun(x);
+	println!("x was: '{}' ", x);
+}
+\end{minted}
+\pause
+\begin{figure}
+	\centering
+	\includegraphics[width=1\linewidth]{ExampleCompilerOutput}
+	\caption{"Not a bad way to explain the error in the code"}
+	\label{fig:examplecompileroutput}
+\end{figure}
+\end{frame}
+
+\begin{frame}{Rules of ownership}
+\begin{enumerate}
+	\item Each object can be used only once - it is "moved" every time
+	\item Out of scope objects are destroyed and cannot be used
+	\item Each block produces a value that goes one scope up
+	\item All objects have a lifetime that constrains which scopes they may be moved out of
+\end{enumerate}
+\pause
+There are always exceptions to any rule...
+\pause
+\begin{enumerate}
+	\item Object that implement the special trait \emph{Copy} (think as if on every "=" we do a copy)
+	\item Reference borrowing - you can have as many as you like immutable references to an object or one mutable
+\end{enumerate}
+\blfootnote{Source: \texttt{\url{https://chrismorgan.info/blog/rust-ownership-the-hard-way/}}}
+\end{frame}
+
+\begin{frame}[fragile]
+\frametitle{Cool Stuff in Rust as a language \tiny{Or how to shoot yourself in the foot in style}}
+\begin{enumerate}
+	\item Functional tools (could possibly be faster than loops)\begin{minted}[fontsize=\scriptsize]{rust}
+		let sum_squares = a_vec.iter().map(|v| v * v).sum();
+	\end{minted}
+	\item Algebraic types \begin{minted}[fontsize=\scriptsize]{rust}
+	enum IpAddr {
+		V4(u8, u8, u8, u8), 
+		V6(String),
+	}
+	\end{minted}
+	\item Destructuring and matching \begin{minted}[fontsize=\scriptsize]{rust}
+	let as_string = match ip {
+		IpAddr::V4(a, b, c, d) => format!("{}.{}.{}.{}", a, b, c, d),
+		IpAddr::V6(s) => s.clone()
+	};
+	\end{minted}
+	\item Anyone can implement a Trait for their Struct
+\end{enumerate}
+\end{frame}
+
+\begin{frame}[fragile]{Two important Enums}
+\begin{itemize}
+	\item \begin{minted}{rust}
+enum Result<T, E> {
+	Ok(T),
+	Err(E),
+}
+		\end{minted}
+		You either get the value or get an error - Rust doesn't have exceptions that can get swept under the rug.
+	\item \begin{minted}{rust}
+enum Option<T> {
+	None,
+	Some(T),
+}
+	\end{minted}
+	None is only part of this enum, again forcing you to handle missing values.
+\end{itemize}
+\end{frame}
+
+\begin{frame}{Memory safety, concurrency}
+\begin{itemize}
+\item The ownership, type system and the borrow checker are some of what guarantees the memory safety in Rust. The compiler proves that no Segmentation Faults, memory leaks etc. cannot happen - otherwise, you get compile time error. 
+\item "Fearless concurrency" - the same checks are done when multiple threads are involved, so two threads accessing the same memory location with read and write is not possible (mostly). 
+\item If that was all, Rust would be too rigid and unusable, hence \mint{rust}{unsafe} code word. This signals to the compiler: "I, the human, checked this piece of code and it is fine." You are free to do whatever in these sections (e.g. pointer arithmetic).
+\end{itemize}
+\end{frame}
+
+\begin{frame}{Tooling}
+Some example tools for development (non exhaustive)
+	\begin{itemize}
+		\item \texttt{rustc} - the compiler (already saw the error messages)
+		\item \texttt{rustup} - updater of the above
+		\item \texttt{cargo} - package manager (crate in rust parlance)
+		\item \texttt{cargofmt} - formatter (so the code looks nice)
+		\item \texttt{clippy} - linter (helps find potential issues)
+		\item \texttt{rust-analyzer} - IDE support (i.e. code completion) can integrate into your favorite text editor
+	\end{itemize}
+\end{frame}
+
+\section{Motivating Example Revisited}
+\begin{frame}{Extending Python}
+	\begin{itemize}
+		\item Python C Package - write directly C code (i.e. extend CPython)
+		\item Cython - mixture of Python and C (C++) syntax - this is parsed to C and then compiled as above
+		\item With enough dedication any language that can build a dynamic library (and some C files to be link the two) can be used for Python modules (e.g. GoLang)
+	\end{itemize}
+	\pause
+	Enter PyO3:
+	\begin{itemize}
+		\item A Rust bindings for Python
+		\item Most of the 'magic' happens with the help of annotations
+		\item Several different ways to actually build the package.
+	\end{itemize}
+\end{frame}
+
+
+\begin{frame}[fragile]{Definition}
+\begin{minted}[fontsize=\small]{rust}
+	#[pyclass]
+	struct ScaledTModel {
+		data_size: usize,
+		nu: f64,
+		tau2: f64,
+		mu: f64,
+		alpha2: f64,
+		
+		extended_vars: Vec<f64>,
+		data: Vec<f64>,
+		result_mu: Vec<f64>,
+		result_sigma2: Vec<f64>,
+	}
+	#[pymodule]
+	fn rust_great_model(_py: Python, m: &PyModule) -> PyResult<()> {
+		m.add_class::<ScaledTModel>()?;
+	
+		Ok(())
+	}	
+\end{minted}
+\end{frame}
+
+\begin{frame}[fragile]{Exposed methods}
+	\begin{minted}[fontsize=\small]{rust}
+#[pymethods]
+impl ScaledTModel {
+	#[new]
+	fn new(data: Vec<f64>, nu: f64) -> Self {
+		println!("making a rust model");
+		ScaledTModel {
+			// skipped in slides!
+		}
+	}
+			
+	#[getter]
+	fn get_mu(&self) -> PyResult<Vec<f64>> {
+		Ok(self.result_mu.clone())
+	}
+			
+	#[getter]
+	fn get_sigma2(&self) -> PyResult<Vec<f64>> {
+		Ok(self.result_sigma2.clone())
+	}
+			
+	fn run(&mut self, burn_in: usize, 
+			sample_size: usize) -> PyResult<()> {
+		todo!()
+	}
+}
+	\end{minted}
+\end{frame}
+
+
+\begin{frame}[fragile]{Folder Structure}
+\begin{minted}{text}
+great_model
+│   Cargo.lock                  <---- Rust related
+│   Cargo.toml                  <---- Rust related
+│   MANIFEST.in                 <---- Some Rust changes
+│   pyproject.toml
+│   requirements.txt
+│   setup.py                    <---- Some Rust changes
+│   
+├───great_model
+│   ├───numpy_great_model
+│   │       scaled_t_model.py
+│   │       __init__.py
+│   │       
+│   └───python_great_model
+│           scaled_t_model.py
+│           __init__.py
+│           
+└───src
+    lib.rs                      <---- Rust related (source code)
+\end{minted}
+\end{frame}
+
+
+\begin{frame}[fragile]{Cargo.toml}
+\begin{minted}[fontsize=\scriptsize]{toml}
+[package]
+name = "great_model"
+version = "1.0.0"
+edition = "2018"
+
+# See more keys and their definitions at 
+# https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[lib]
+name = "great_model"
+# "cdylib" is necessary to produce a shared 
+# library for Python to import from.
+#
+# Downstream Rust code (including code in `bin/`, `examples/`,
+# and `tests/`) will not be able the code unless the "rlib" or 
+# "lib" crate type is also included, e.g.:
+# crate-type = ["cdylib", "rlib"]
+crate-type = ["cdylib"]
+
+[dependencies]
+rand = "0.8.4"
+rand_distr = "0.4.1"
+rand_xoshiro = "0.6.0"
+
+[dependencies.pyo3]
+version = "0.14.1"
+features = ["extension-module"]
+\end{minted}
+\end{frame}
+
+\begin{frame}[fragile]{MANIFEST and pyproject}
+A MANIFEST.in file consists of commands, one per line, instructing setuptools to add or remove some set of files from the distribute package .
+\begin{minted}[fontsize=\scriptsize]{ini}
+include pyproject.toml Cargo.toml
+recursive-include src *
+\end{minted}
+
+pyproject.toml specifies the minimum build system for python (basically - make setup.py work)
+\begin{minted}[fontsize=\scriptsize]{toml}
+[build-system]
+requires = [
+	"setuptools>=42",
+	"wheel",
+	"setuptools-rust"
+]
+build-backend = "setuptools.build_meta"
+\end{minted}
+\end{frame}
+
+\begin{frame}[fragile]{setup.py}
+\begin{minted}[fontsize=\small, linenos]{python}
+import setuptools
+from setuptools_rust import Binding, RustExtension
+
+setuptools.setup(
+	name="great-model",
+	version="1.0.0",
+	author="Metodi Nikolov",
+	author_email="metodi.nikolov@gmail.com",
+	classifiers=[
+		"Programming Language :: Python :: 3",
+		"License :: OSI Approved :: MIT License",
+		"Operating System :: OS Independent",
+	],
+	rust_extensions=[RustExtension("great_model.rust_great_model", 
+				binding=Binding.PyO3)],
+	zip_safe=False,
+	packages=setuptools.find_packages(),
+	python_requires=">=3.8",
+)
+\end{minted}
+Lines 2, 14-16 are need for the rust bindings, the rest are standard python package.
+\end{frame}
+
+\begin{frame}[fragile]{Implementing the model}
+\begin{minted}[fontsize=\small]{rust}
+fn run(&mut self, burn_in: usize, sample_size: usize) -> PyResult<()> {
+	let mut rng = Xoshiro256Plus::seed_from_u64(0);
+	for _ in 0..burn_in {
+		self.update_extended_vars(&mut rng);
+		self.update_alpha2(&mut rng);
+		self.update_mu(&mut rng);
+		self.update_tau2(&mut rng);
+	}
+
+	self.result_mu.resize(sample_size, 0.0);
+	self.result_sigma2.resize(sample_size, 0.0);
+	
+	for i in 0..sample_size {
+		self.update_extended_vars(&mut rng);
+		self.update_alpha2(&mut rng);
+		self.update_mu(&mut rng);
+		self.update_tau2(&mut rng);
+		self.result_mu[i] = self.mu;
+		self.result_sigma2[i] = self.alpha2 * self.tau2;
+	}
+	Ok(())
+}
+\end{minted}
+\end{frame}
+
+
+\begin{frame}[fragile]{Implementing the model}
+\begin{minted}[fontsize=\small]{rust}
+fn update_mu<R>(&mut self, rng: &mut R)
+	where
+		R: Rng,
+{
+	let mut tmp: f64;
+	let mut variance = 0.0;
+	let mut expected_value = 0.0;
+	for (datum, ext_var) in self.data.iter().
+			zip(self.extended_vars.iter()) {
+		tmp = 1.0 / ext_var;
+		variance += tmp;
+		expected_value += datum * tmp;
+	}
+	variance /= self.alpha2;
+	expected_value /= self.alpha2;
+	variance = 1.0 / variance;
+	expected_value = expected_value * variance;
+
+	self.mu = expected_value + variance.sqrt() * 
+			rng.sample::<f64, _>(StandardNormal);
+}
+\end{minted}
+\end{frame}
+
+
+\begin{frame}[fragile]{Implementing the model}
+\begin{minted}[fontsize=\small]{rust}
+fn update_tau2<R>(&mut self, rng: &mut R)
+	where
+		R: Rng,
+{
+	let x: f64 = self.extended_vars.iter().map(|x| 1.0 / x).sum();
+	let scale = 2.0 / (self.nu * x);
+	let gamma = Gamma::new(
+		(self.data_size as f64) * self.nu / 2.0, 
+		scale,
+		).expect(&format!(
+			"Failed at creation of Gamma, shape:{:}, scale: {:}",
+			(self.data_size as f64) * self.nu / 2.0,
+			2.0 / (self.nu * x)
+		),
+	);
+	self.tau2 = gamma.sample(rng);
+}
+\end{minted}
+\end{frame}
+
+
+\begin{frame}[fragile]{Implementing the model}
+\begin{minted}[fontsize=\small]{rust}
+fn update_alpha2<R>(&mut self, rng: &mut R)
+	where
+		R: Rng,
+{
+	let mu = self.mu;
+	let mut x = self
+		.data
+		.iter()
+		.zip(self.extended_vars.iter())
+		.map(|(datum, ext_var)| (datum - mu) * (datum - mu) / ext_var)
+		.sum();
+	x /= self.data_size as f64;
+	self.alpha2 = sample_scaled_inv_chi_square(rng, self.data_size as _, x);
+}
+\end{minted}
+\end{frame}
+
+
+\begin{frame}[fragile]{Implementing the model}
+\begin{minted}[fontsize=\small]{rust}
+fn update_extended_vars<R>(&mut self, rng: &mut R)
+	where
+		R: Rng,
+{
+	let mut x: f64;
+	let mu = self.mu;
+	let alpha2 = self.alpha2;
+	let tau2 = self.tau2;
+	let nu = self.nu + 1.0;
+
+	let nutau2 = self.nu * tau2;
+	let chi = ChiSquared::new(nu).expect(
+					"Failed at creation of ChiSquared");
+	for i in 0..self.data_size {
+		let datum = self.data[i];
+		x = (datum - mu) * (datum - mu) * alpha2;
+		self.extended_vars[i] = (nutau2 + x) / chi.sample(rng);
+	}
+}
+\end{minted}
+\end{frame}
+
+
+\begin{frame}[fragile]{Rust implementation}
+\begin{minted}[fontsize=\scriptsize]{python}
+from great_model.rust_great_model import ScaledTModel as RustModel
+import numpy as np
+from timeit import timeit
+
+nu = 6
+mu = -3.14
+sigma2 = 30
+data_size = 500
+z = np.random.randn(data_size)
+x = np.random.chisquare(nu, data_size)
+
+t_data = mu + z * np.sqrt(sigma2 * nu / x)
+
+r_model = RustModel(t_data, nu)
+
+exec_time = timeit('r_model.run(2000, 2000)', 
+	globals=globals(), number = 10)
+print(f"Average run time of Rust model: {exec_time * 1000 / 10:3.5f} ms")
+Average run time of Rust model: 113.34160 ms
+\end{minted}
+\end{frame}
+
+\section{Next Steps}
+\begin{frame}{Leaving you with..}
+\begin{itemize}
+	\item Language \texttt{\url{https://www.rust-lang.org/}}
+	\item The Book \texttt{\url{https://doc.rust-lang.org/stable/book/}}
+	\item Good introduction \texttt{\url{https://tourofrust.com/}}
+	\item Reference (work in progress) \texttt{\url{https://doc.rust-lang.org/stable/reference/}}
+	\item Reddit \texttt{\url{https://www.reddit.com/r/rust/}}
+
+	\item \texttt{\url{https://github.com/MetodiNikolov/SummerSchool2021}}
+\end{itemize}
+\end{frame}
+%\begin{frame}[allowframebreaks]
+%\begin{thebibliography}{9}
+%	\setbeamertemplate{bibliography item}[triangle]
+%	\bibitem{gelman}
+%	Gelman, A.; Carlin, J. B.; Stern, H. S. \& Rubin, D. B. (2014), \emph{Bayesian Data Analysis}, Chapman and Hall/CRC 
+%\end{thebibliography}
+%\end{frame}
+
+\begin{frame}{Thank you!}
+\huge Thank you for the attention!
+\end{frame}
 \end{document}
